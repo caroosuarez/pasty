@@ -8,12 +8,14 @@ final class StatusBarController: NSObject {
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let settingsWindowController: SettingsWindowController
+    private let browserWindowController: ClipboardBrowserWindowController
 
     init(store: ClipboardStore, settings: AppSettings) {
         self.store = store
         self.settings = settings
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.settingsWindowController = SettingsWindowController(settings: settings)
+        self.browserWindowController = ClipboardBrowserWindowController(store: store)
         super.init()
 
         NotificationCenter.default.addObserver(
@@ -23,17 +25,16 @@ final class StatusBarController: NSObject {
             object: settings
         )
 
-        configureStatusItem()
-
-        store.onChange = { [weak self] in
+        _ = store.addChangeObserver { [weak self] in
             self?.rebuildMenu()
         }
 
+        configureStatusItem()
         rebuildMenu()
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+    func toggleClipboardWindow() {
+        browserWindowController.toggleVisibility()
     }
 
     private func configureStatusItem() {
@@ -59,7 +60,7 @@ final class StatusBarController: NSObject {
     private func rebuildMenu() {
         menu.removeAllItems()
 
-        let recentItems = Array(store.items.prefix(settings.menuItemLimit))
+        let recentItems = Array(store.orderedItems().prefix(settings.menuItemLimit))
 
         if recentItems.isEmpty {
             let emptyItem = NSMenuItem(title: "Clipboard is empty", action: nil, keyEquivalent: "")
@@ -68,7 +69,7 @@ final class StatusBarController: NSObject {
         } else {
             for item in recentItems {
                 let menuItem = NSMenuItem(
-                    title: Self.displayTitle(for: item),
+                    title: displayTitle(for: item),
                     action: #selector(selectClipboardItem(_:)),
                     keyEquivalent: ""
                 )
@@ -85,12 +86,17 @@ final class StatusBarController: NSObject {
 
         menu.addItem(NSMenuItem.separator())
 
+        let showClipboardItem = NSMenuItem(title: "Show Clipboard", action: #selector(openClipboardWindow), keyEquivalent: "v")
+        showClipboardItem.keyEquivalentModifierMask = [.command, .shift]
+        showClipboardItem.target = self
+        menu.addItem(showClipboardItem)
+
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.keyEquivalentModifierMask = [.command]
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        let clearItem = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
+        let clearItem = NSMenuItem(title: "Clear History (Keep Pinned)", action: #selector(clearHistory), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
 
@@ -102,6 +108,10 @@ final class StatusBarController: NSObject {
     @objc private func selectClipboardItem(_ sender: NSMenuItem) {
         guard let item = sender.representedObject as? ClipboardItem else { return }
         store.copyToPasteboard(item)
+    }
+
+    @objc private func openClipboardWindow() {
+        browserWindowController.present()
     }
 
     @objc private func openSettings() {
@@ -116,21 +126,23 @@ final class StatusBarController: NSObject {
         NSApp.terminate(nil)
     }
 
-    private static func displayTitle(for item: ClipboardItem) -> String {
+    private func displayTitle(for item: ClipboardItem) -> String {
+        let pinPrefix = store.isPinned(item) ? "★ " : ""
+
         switch item.content {
         case .text(let value):
             let compact = value.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 
-            if compact.count <= 70 {
-                return compact
+            if compact.count <= 66 {
+                return pinPrefix + compact
             }
 
-            return String(compact.prefix(67)) + "..."
+            return pinPrefix + String(compact.prefix(63)) + "..."
         case .image(_, let width, let height):
             if width > 0 && height > 0 {
-                return "Image \(width)x\(height)"
+                return pinPrefix + "Image \(width)x\(height)"
             }
-            return "Image"
+            return pinPrefix + "Image"
         }
     }
 }

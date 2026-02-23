@@ -10,6 +10,8 @@ final class AppSettings {
         static let captureImages = "captureImages"
         static let trimWhitespace = "trimWhitespace"
         static let pollingInterval = "pollingInterval"
+        static let pinnedFingerprints = "pinnedFingerprints"
+        static let retentionDays = "retentionDays"
     }
 
     private let defaults = UserDefaults.standard
@@ -52,12 +54,29 @@ final class AppSettings {
         }
     }
 
+    var pinnedFingerprints: Set<String> {
+        didSet {
+            defaults.set(Array(pinnedFingerprints), forKey: Key.pinnedFingerprints)
+            postChange()
+        }
+    }
+
+    var retentionDays: Int {
+        didSet {
+            retentionDays = Self.clamp(retentionDays, min: 1, max: 365)
+            defaults.set(retentionDays, forKey: Key.retentionDays)
+            postChange()
+        }
+    }
+
     init() {
         let defaultHistoryLimit = 50
         let defaultMenuItemLimit = 20
         let defaultCaptureImages = true
         let defaultTrimWhitespace = true
         let defaultPollingInterval = 0.5
+        let defaultPinnedFingerprints: [String] = []
+        let defaultRetentionDays = 7
 
         if defaults.object(forKey: Key.historyLimit) == nil {
             defaults.set(defaultHistoryLimit, forKey: Key.historyLimit)
@@ -79,11 +98,21 @@ final class AppSettings {
             defaults.set(defaultPollingInterval, forKey: Key.pollingInterval)
         }
 
+        if defaults.object(forKey: Key.pinnedFingerprints) == nil {
+            defaults.set(defaultPinnedFingerprints, forKey: Key.pinnedFingerprints)
+        }
+
+        if defaults.object(forKey: Key.retentionDays) == nil {
+            defaults.set(defaultRetentionDays, forKey: Key.retentionDays)
+        }
+
         historyLimit = Self.clamp(defaults.integer(forKey: Key.historyLimit), min: 10, max: 500)
         menuItemLimit = Self.clamp(defaults.integer(forKey: Key.menuItemLimit), min: 5, max: 100)
         captureImages = defaults.bool(forKey: Key.captureImages)
         trimWhitespace = defaults.bool(forKey: Key.trimWhitespace)
         pollingInterval = Self.clamp(defaults.double(forKey: Key.pollingInterval), min: 0.2, max: 2.0)
+        pinnedFingerprints = Set(defaults.stringArray(forKey: Key.pinnedFingerprints) ?? defaultPinnedFingerprints)
+        retentionDays = Self.clamp(defaults.integer(forKey: Key.retentionDays), min: 1, max: 365)
     }
 
     private static func clamp<T: Comparable>(_ value: T, min minValue: T, max maxValue: T) -> T {
