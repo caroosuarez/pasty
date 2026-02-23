@@ -8,6 +8,7 @@ final class SettingsWindowController: NSWindowController {
     private let historyValueLabel = NSTextField(labelWithString: "")
     private let menuItemsValueLabel = NSTextField(labelWithString: "")
     private let pollingValueLabel = NSTextField(labelWithString: "")
+    private let retentionValueLabel = NSTextField(labelWithString: "")
 
     private lazy var historySlider: NSSlider = {
         let slider = NSSlider(value: Double(settings.historyLimit), minValue: 10, maxValue: 500, target: self, action: #selector(historyChanged(_:)))
@@ -26,6 +27,13 @@ final class SettingsWindowController: NSWindowController {
     private lazy var pollingSlider: NSSlider = {
         let slider = NSSlider(value: settings.pollingInterval, minValue: 0.2, maxValue: 2.0, target: self, action: #selector(pollingChanged(_:)))
         slider.numberOfTickMarks = 19
+        slider.allowsTickMarkValuesOnly = false
+        return slider
+    }()
+
+    private lazy var retentionSlider: NSSlider = {
+        let slider = NSSlider(value: Double(settings.retentionDays), minValue: 1, maxValue: 365, target: self, action: #selector(retentionChanged(_:)))
+        slider.numberOfTickMarks = 13
         slider.allowsTickMarkValuesOnly = false
         return slider
     }()
@@ -52,7 +60,7 @@ final class SettingsWindowController: NSWindowController {
         self.settings = settings
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 410),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -91,11 +99,12 @@ final class SettingsWindowController: NSWindowController {
         root.addArrangedSubview(makeSliderRow(title: "History size", slider: historySlider, valueLabel: historyValueLabel))
         root.addArrangedSubview(makeSliderRow(title: "Menu items shown", slider: menuItemsSlider, valueLabel: menuItemsValueLabel))
         root.addArrangedSubview(makeSliderRow(title: "Polling interval", slider: pollingSlider, valueLabel: pollingValueLabel))
+        root.addArrangedSubview(makeSliderRow(title: "Keep history for", slider: retentionSlider, valueLabel: retentionValueLabel))
         root.addArrangedSubview(captureImagesCheckbox)
         root.addArrangedSubview(trimWhitespaceCheckbox)
         root.addArrangedSubview(launchAtLoginCheckbox)
 
-        let noteLabel = NSTextField(labelWithString: "Tip: Launch at login works best once Pasty.app is in /Applications.")
+        let noteLabel = NSTextField(labelWithString: "Default retention is 7 days. Pinned items are not auto-removed.")
         noteLabel.textColor = .secondaryLabelColor
         noteLabel.lineBreakMode = .byWordWrapping
         noteLabel.maximumNumberOfLines = 2
@@ -131,6 +140,7 @@ final class SettingsWindowController: NSWindowController {
         historyValueLabel.stringValue = "\(settings.historyLimit)"
         menuItemsValueLabel.stringValue = "\(settings.menuItemLimit)"
         pollingValueLabel.stringValue = String(format: "%.1fs", settings.pollingInterval)
+        retentionValueLabel.stringValue = "\(settings.retentionDays) days"
     }
 
     @objc private func historyChanged(_ sender: NSSlider) {
@@ -151,6 +161,13 @@ final class SettingsWindowController: NSWindowController {
         let rounded = (sender.doubleValue * 10).rounded() / 10
         settings.pollingInterval = rounded
         pollingSlider.doubleValue = settings.pollingInterval
+        refreshLabels()
+    }
+
+    @objc private func retentionChanged(_ sender: NSSlider) {
+        let rounded = Int(sender.doubleValue.rounded())
+        settings.retentionDays = rounded
+        retentionSlider.doubleValue = Double(settings.retentionDays)
         refreshLabels()
     }
 
