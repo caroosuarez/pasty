@@ -120,6 +120,13 @@ private final class ClipboardCardItem: NSCollectionViewItem {
     private lazy var previewHeightConstraint = previewImageView.heightAnchor.constraint(equalToConstant: 54)
     private var hoverTrackingArea: NSTrackingArea?
     private var isHovered = false
+    var onDoubleClick: (() -> Void)?
+    private lazy var cardDoubleClickGesture: NSClickGestureRecognizer = {
+        let gesture = NSClickGestureRecognizer(target: self, action: #selector(handleCardDoubleClick(_:)))
+        gesture.numberOfClicksRequired = 2
+        gesture.buttonMask = 0x1
+        return gesture
+    }()
 
     override var isSelected: Bool {
         didSet {
@@ -129,6 +136,7 @@ private final class ClipboardCardItem: NSCollectionViewItem {
 
     override func loadView() {
         view = NSView()
+        view.addGestureRecognizer(cardDoubleClickGesture)
 
         cardView.material = .menu
         cardView.state = .active
@@ -238,6 +246,7 @@ private final class ClipboardCardItem: NSCollectionViewItem {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        onDoubleClick = nil
         isHovered = false
         updateVisualState(animated: false)
     }
@@ -253,6 +262,13 @@ private final class ClipboardCardItem: NSCollectionViewItem {
         guard isHovered else { return }
         isHovered = false
         updateVisualState(animated: true)
+    }
+    
+    
+    @objc
+    private func handleCardDoubleClick(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        onDoubleClick?()
     }
 
     func configure(type: String, age: String, content: String, source: String, sourceIcon: NSImage?, preview: NSImage?, theme: ClipboardCardTheme, sourceStripAccent: AppAccent, isPinned: Bool) {
@@ -362,6 +378,7 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
     private let store: ClipboardStore
 
     private var localEventMonitor: Any?
+    private var localMouseMonitor: Any?
     private var displayedItems: [ClipboardItem] = []
     private var iconCache: [String: NSImage] = [:]
     private var accentCache: [String: AppAccent] = [:]
@@ -417,7 +434,7 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
     }
 
     func present() {
-        refreshDisplayedItems(keepSelection: true)
+        refreshDisplayedItems(keepSelection: false, defaultSelectionScrollPosition: .left)
         positionWindowAtBottom()
         showWindow(nil)
         window?.orderFrontRegardless()
@@ -427,6 +444,12 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
         if localEventMonitor == nil {
             localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 self?.handleLocalKeyEvent(event) ?? event
+            }
+        }
+
+        if localMouseMonitor == nil {
+            localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                self?.handleLocalMouseEvent(event) ?? event
             }
         }
 
@@ -456,6 +479,11 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
         if let localEventMonitor {
             NSEvent.removeMonitor(localEventMonitor)
             self.localEventMonitor = nil
+        }
+
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
         }
     }
 
@@ -616,6 +644,24 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
         return event
     }
 
+    private func handleLocalMouseEvent(_ event: NSEvent) -> NSEvent? {
+        guard window?.isKeyWindow == true else { return event }
+        guard event.clickCount >= 2 else { return event }
+
+        let locationInCollection = collectionView.convert(event.locationInWindow, from: nil)
+        guard let indexPath = collectionView.indexPathForItem(at: locationInCollection),
+              indexPath.item >= 0,
+              indexPath.item < displayedItems.count else {
+            return event
+        }
+
+        let item = displayedItems[indexPath.item]
+        selectIndex(indexPath.item, scrollPosition: [])
+        store.copyToPasteboard(item)
+        close()
+        return nil
+    }
+
     private func moveSelection(delta: Int) {
         guard !displayedItems.isEmpty else { return }
 
@@ -633,9 +679,9 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
         return displayedItems[selectedIndex]
     }
 
-    private func selectIndex(_ index: Int) {
+    private func selectIndex(_ index: Int, scrollPosition: NSCollectionView.ScrollPosition = .centeredHorizontally) {
         let indexPath = IndexPath(item: index, section: 0)
-        collectionView.selectItems(at: [indexPath], scrollPosition: .centeredHorizontally)
+        collectionView.selectItems(at: [indexPath], scrollPosition: scrollPosition)
         updateActionButtons()
     }
 
@@ -649,6 +695,7 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
         refreshDisplayedItems(keepSelection: false)
     }
 
+    
     @objc
     private func copySelected(_ sender: Any?) {
         guard let item = selectedItem else { return }
@@ -667,7 +714,7 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
         BrowserCollection(rawValue: collectionTabs.selectedSegment) ?? .clipboard
     }
 
-    private func refreshDisplayedItems(keepSelection: Bool) {
+    private func refreshDisplayedItems(keepSelection: Bool, defaultSelectionScrollPosition: NSCollectionView.ScrollPosition = .centeredHorizontally) {
         let previousFingerprint = keepSelection ? selectedItem?.fingerprint : nil
         displayedItems = filteredItemsForCurrentCollection(query: searchField.stringValue)
 
@@ -677,7 +724,7 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
            let index = displayedItems.firstIndex(where: { $0.fingerprint == previousFingerprint }) {
             selectIndex(index)
         } else if !displayedItems.isEmpty {
-            selectIndex(0)
+            selectIndex(0, scrollPosition: defaultSelectionScrollPosition)
         } else {
             collectionView.deselectAll(nil)
             updateActionButtons()
@@ -997,6 +1044,17 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
 
         let theme = cardTheme(for: item)
         let sourceAppIcon = sourceIcon(for: item)
+        let itemFingerprint = item.fingerprint
+
+        clipboardCardItem.onDoubleClick = { [weak self] in
+            guard let self,
+                  let tappedItem = self.displayedItems.first(where: { $0.fingerprint == itemFingerprint }) else {
+                return
+            }
+
+            self.store.copyToPasteboard(tappedItem)
+            self.close()
+        }
 
         clipboardCardItem.configure(
             type: typeLabel,
@@ -1015,5 +1073,17 @@ final class ClipboardBrowserWindowController: NSWindowController, NSCollectionVi
 
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
         updateActionButtons()
+
+        guard let event = NSApp.currentEvent,
+              event.clickCount >= 2,
+              let indexPath = indexPaths.first,
+              indexPath.item >= 0,
+              indexPath.item < displayedItems.count else {
+            return
+        }
+
+        let item = displayedItems[indexPath.item]
+        store.copyToPasteboard(item)
+        close()
     }
 }
